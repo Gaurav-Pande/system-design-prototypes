@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Socket.IO Chat</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+</head>
+<body>
+    <div id="chat-container">
+        <input type="text" id="username" placeholder="Enter Username">
+        <select id="message-type">
+            <option value="broadcast">Broadcast</option>
+            <option value="private">Private Message</option>
+        </select>
+        <input type="text" id="recipient" placeholder="Recipient (for private msg)">
+        <textarea id="messages" readonly></textarea>
+        <input type="text" id="message-input" placeholder="Type your message">
+        <button onclick="sendMessage()">Send</button>
+    </div>
+
+    <script>
+        const socket = io();
+        let username = '';
+
+        function sendMessage() {
+            const messageType = document.getElementById('message-type').value;
+            const message = document.getElementById('message-input').value;
+            const recipient = document.getElementById('recipient').value;
+
+            if (!username) {
+                username = document.getElementById('username').value;
+                socket.emit('register_username', username);
+            }
+
+            if (messageType === 'broadcast') {
+                socket.emit('broadcast_message', { username, message });
+            } else {
+                socket.emit('private_message', { username, message, recipient });
+            }
+
+            document.getElementById('message-input').value = '';
+        }
+
+        socket.on('receive_message', (data) => {
+            const messagesArea = document.getElementById('messages');
+            messagesArea.value += `${data.username}: ${data.message}\n`;
+        });
+
+        socket.on('receive_private_message', (data) => {
+            const messagesArea = document.getElementById('messages');
+            messagesArea.value += `[PRIVATE] ${data.sender}: ${data.message}\n`;
+        });
+    </script>
+</body>
+</html>
