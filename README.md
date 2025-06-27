@@ -1,98 +1,99 @@
-NOTE- Under developement
+# System Design Prototypes
 
-# system-design-prototypes
-Some fun prototypes while learning system design
+A collection of fun, hands-on prototypes to learn and remember key system design concepts. Each section explains the concept in simple, first-principles language, with diagrams and code to help you visualize and build intuition.
+
+---
+
+## Table of Contents
+- [Multi Threading](#multi-threading)
+- [Blocking Queues](#blocking-queues)
+- [WebSockets](#websockets)
+- [Real-Time Chats](#real-time-chats)
+- [Two-Phase Commit (Distributed Transactions)](#two-phase-commit-distributed-transactions)
+- [Unique ID Generation in Distributed Systems](#unique-id-generation-in-distributed-systems)
+- [Simple CDN (Content Delivery Network)](#simple-cdn-content-delivery-network)
+
+---
 
 ## Multi Threading
+**Concept:**
+Multi-threading allows a program to do multiple things at the same time. Imagine a chef cooking several dishes at once, instead of waiting for one to finish before starting the next. This is useful for speeding up programs, especially when tasks can run independently.
 
-## BlockingQueues
+---
+
+## Blocking Queues
+**Concept:**
+A blocking queue is like a waiting line at a store. If the line is full, new people (tasks) have to wait before joining. If the line is empty, the cashier (worker) waits for someone to arrive. This helps coordinate work between producers (who add tasks) and consumers (who process them).
+
+---
 
 ## WebSockets
-### Using Client/Server
-### Send a request to websocket over TCP connection from powershell
+**Concept:**
+WebSockets let your browser and a server talk to each other instantly, like a phone call instead of sending letters. This is great for chat apps, games, or anything that needs real-time updates.
+
+**Example:**
+- Connect to a WebSocket server from PowerShell:
 
 ```
 $tcpClient = New-Object System.Net.Sockets.TcpClient("localhost", 3000)
 $networkStream = $tcpClient.GetStream()
 ```
 
-Send headers directly
+---
 
-```
-$headers = [System.Text.Encoding]::ASCII.GetBytes(@"
-GET / HTTP/1.1
-Host: localhost:3000
-Upgrade: websocket
-Connection: Upgrade
-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
-WebSocket-Version: 13
-"@)
+## Real-Time Chats
+**Concept:**
+A real-time chat app lets users send and receive messages instantly, just like texting. Under the hood, it often uses WebSockets to keep everyone in sync.
 
-$networkStream.Write($headers, 0, $headers.Length)
-$networkStream.Flush()
-```
+---
 
-
-## RealTimeChats
-
-
-## Two-Phase Commit
-A distributed transaction protocol that ensures all participating services either commit or abort a transaction, providing atomicity.
+## Two-Phase Commit (Distributed Transactions)
+**Concept:**
+Imagine you and a friend want to buy a pizza together, but only if both of you have enough money. You both check your wallets (prepare phase). If you both have enough, you pay (commit). If either of you doesn't, you both walk away (abort). This is how distributed transactions work: all parts must agree to proceed, or nothing happens.
 
 **Why is it needed?**
-In a distributed system, a single business transaction might require updating data across multiple services or databases. For example, an e-commerce order might need to update the inventory service, the payment service, and the shipping service. If one of these updates fails, we need a way to roll back the changes in the other services to maintain data consistency. Without a protocol like 2PC, the system could be left in an inconsistent state (e.g., payment taken, but inventory not updated).
+In a system with many services (like inventory and delivery), you want to make sure either all changes happen, or none do. This keeps your data consistent.
 
-**When to use it?**
-Two-phase commit is used when you need to guarantee atomicity for a transaction that spans multiple resource managers (like databases or services). It's essential in systems where data integrity is paramount, such as financial systems, e-commerce platforms, and booking systems. However, 2PC is a blocking protocol, which means it can hold locks on resources while waiting for all participants to be ready. This can impact system performance and availability. Therefore, it should be used in situations where the need for strong consistency outweighs the potential performance overhead. Alternatives like Sagas are often considered for less critical transactions or when higher availability is required.
+**How it works (with diagram):**
 
-### Prototype
-A food delivery system prototype demonstrating the two-phase commit protocol. The system consists of an `InventoryService`, a `DeliveryService`, and a `Coordinator`.
+```
++-----------+        +-------------------+        +-------------------+
+|  Client   |<-----> |   Coordinator     |<-----> |  Participants     |
++-----------+        +-------------------+        +-------------------+
+     |                      |                           |
+     | 1. Start Txn         |                           |
+     |--------------------->|                           |
+     |                      | 2. Prepare?               |
+     |                      |-------------------------->|
+     |                      |<--------------------------|
+     |                      | 3. All Ready?             |
+     |                      | 4. Commit/Abort           |
+     |                      |-------------------------->|
+     |                      |<--------------------------|
+     | 5. Result            |                           |
+     |<---------------------|                           |
+```
 
-**How it works:**
-The `Coordinator` orchestrates the transaction across the `InventoryService` and `DeliveryService`. When an order is placed, the `Coordinator` initiates the two-phase commit protocol:
-1.  **Phase 1: Prepare**: The `Coordinator` asks both the `InventoryService` and `DeliveryService` to prepare for the transaction.
-    *   The `InventoryService` checks if the food item is available and reserves it.
-    *   The `DeliveryService` checks if a delivery person is available and reserves them.
-    *   If both services can prepare successfully, they are in a "prepared" state, ready to commit.
-2.  **Phase 2: Commit or Abort**:
-    *   If both services are prepared, the `Coordinator` sends a "commit" message to both. The services then make their changes permanent.
-    *   If either service fails to prepare, the `Coordinator` sends an "abort" message to both. The services then roll back any changes they made during the prepare phase.
+- **Prepare:** All participants check if they can do the work.
+- **Commit/Abort:** If all are ready, commit. If any fail, abort.
 
-This ensures that the order is either fully processed (food and delivery secured) or not at all, maintaining consistency across the system.
-
--   **InventoryService**: Manages the availability of food items.
--   **DeliveryService**: Manages the availability of delivery personnel.
--   **Coordinator**: Orchestrates the two-phase commit across the `InventoryService` and `DeliveryService`.
-
-The prototype simulates successful and failed transactions to illustrate how the two-phase commit protocol maintains data consistency across distributed services.
-
+---
 
 ## Unique ID Generation in Distributed Systems
-In a distributed system with sharded databases, generating unique primary keys is a critical challenge. Traditional auto-incrementing IDs from a single database are no longer viable, as each shard would generate overlapping sequences, leading to ID collisions.
+**Concept:**
+When you split your data across many databases (shards), you can't just use auto-incrementing IDs (like 1, 2, 3...) because different shards might create the same ID. You need a way to make sure every ID is unique, everywhere.
 
-### The Challenge: Monotonically Increasing IDs vs. High Throughput
-It is practically impossible to generate strictly, mathematically, monotonically increasing IDs (e.g., 1, 2, 3, 4...) with high throughput in a distributed system. This is because:
--   **Single Point of Failure**: A single service generating IDs becomes a bottleneck and a single point of failure.
--   **Coordination Overhead**: Multiple ID generator instances would need to coordinate to avoid collisions, and this coordination (e.g., using locks or gossip protocols) kills performance and throughput.
+**Why not just use UUIDs?**
+- UUIDs are unique, but they're big and random. This makes databases slow because new data gets scattered everywhere (imagine putting new books in random spots on a shelf).
+- Sequential, time-sortable IDs (like Snowflake IDs) keep things fast and organized.
 
-### The "Snowflake" Approach
-A common solution is to use a method inspired by Twitter's Snowflake algorithm, which generates roughly time-sortable, globally unique IDs without requiring coordination between generator instances.
+**How does a Snowflake ID work?**
+It combines:
+- The current time (so IDs are ordered)
+- A worker number (so many servers can make IDs at once)
+- A sequence number (so you can make lots of IDs in the same millisecond)
 
-The ID is a 64-bit number composed of:
-1.  **Timestamp (41 bits)**: The number of milliseconds since a custom epoch. Placing this in the most significant bits makes the IDs sortable by time, which is excellent for database indexing.
-2.  **Worker ID (5 bits)**: A unique ID for each generator instance. This allows up to 32 different generator nodes to operate independently, ensuring uniqueness without coordination.
-3.  **Sequence Number (12 bits)**: An intra-millisecond counter. This allows a single worker to generate up to 4096 unique IDs within the same millisecond, preventing collisions during high-traffic bursts.
-
-#### ID Composition (Bitwise Operations)
-The final ID is assembled using bitwise operations to pack the three components into a single 64-bit integer. This is done with the following logic:
-
-`new_id = (timestamp << 17) | (worker_id << 12) | sequence`
-
--   `<<` (Bitwise Left Shift): This operator moves the bits of a number to the left, making space for the other components.
--   `|` (Bitwise OR): This operator combines the shifted components into the final ID.
-
-Here is the visual layout of the 64-bit ID:
-
+**Bitwise Diagram:**
 ```
 [63, ..., 58] [57, ..., 17]   [16, ..., 12]    [11, ..., 0]
 +-------------+-----------------+------------------+-----------------+
@@ -100,22 +101,49 @@ Here is the visual layout of the 64-bit ID:
 +-------------+-----------------+------------------+-----------------+
 ```
 
--   **Sequence (Bits 0-11)**: Occupies the first 12 bits.
--   **Worker ID (Bits 12-16)**: Shifted left by 12 to be placed next to the sequence.
--   **Timestamp (Bits 17-57)**: Shifted left by 17 (12 + 5) to be placed next to the worker ID.
+- **Sequence (Bits 0-11):** Counts up for each ID in the same millisecond.
+- **Worker ID (Bits 12-16):** Which server made the ID.
+- **Timestamp (Bits 17-57):** When the ID was made.
 
-### Snowflake IDs vs. UUIDs for Database Performance
-| Feature | UUID (v4) | Snowflake-style ID |
-| :--- | :--- | :--- |
-| **Uniqueness** | Excellent | Excellent |
-| **Size** | 128 bits (16 bytes) | 64 bits (8 bytes) |
-| **Ordering** | Random | Time-sortable |
-| **DB Performance** | **Poor**. Random nature causes severe index fragmentation and slow writes. | **Excellent**. Sequential nature leads to fast appends and efficient indexing. |
+**Why is this better?**
+- IDs are unique, ordered, and fast for databases to handle.
 
-UUIDs are a poor choice for primary keys in high-throughput databases with B+ tree indexes (like MySQL's InnoDB) because their random nature leads to constant, expensive page splits and index bloat. Time-sortable Snowflake IDs are inserted sequentially, which is much more efficient.
+---
 
-### Prototype
-A simple blogging application that demonstrates how to generate unique IDs in a sharded environment.
--   **IdGenerator**: A service that generates unique, 64-bit, time-sortable IDs.
--   **BlogService**: Simulates a sharded database where blog posts are stored based on `user_id`. It uses the `IdGenerator` to assign a unique ID to each new post.
+## Simple CDN (Content Delivery Network)
+**Concept:**
+A CDN is like a network of mini-libraries spread around the world. When you want a book (web content), you go to the nearest library (CDN server) instead of the main one (origin server). This makes things much faster!
+
+**What are we building?**
+- Our CDN server runs on `localhost` and acts as a cache.
+- The origin server is set to a real website (e.g., `arpitbhayani.me`).
+- When you request a page from the CDN:
+    - If the CDN has the content cached, it serves it instantly (cache hit).
+    - If not, it fetches the content from the origin server, caches it, and then serves it (cache miss).
+
+**How does a request flow in our CDN?**
+```
++--------+        +---------+        +---------------+
+|  User  | <----> |  CDN    | <----> | Origin Server |
++--------+        +---------+        +---------------+
+     |                |                    |
+     | 1. Request     |                    |
+     |--------------->|                    |
+     |                | 2. Cache Miss?     |
+     |                |------------------->|
+     |                | 3. Fetch Content   |
+     |                |<-------------------|
+     | 4. Serve &     |                    |
+     |    Cache       |                    |
+     |<---------------|                    |
+```
+
+- **Step 1:** User requests a resource from the CDN (localhost).
+- **Step 2:** CDN checks its cache. If not found, it forwards the request to the origin server.
+- **Step 3:** CDN receives the content from the origin server and stores it in its cache.
+- **Step 4:** CDN serves the content to the user. Next time, the same request will be served directly from the cache.
+
+This simple prototype demonstrates the core idea behind real-world CDNs like Cloudflare, Akamai, or AWS CloudFront.
+
+---
 
