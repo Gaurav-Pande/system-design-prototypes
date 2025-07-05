@@ -13,6 +13,7 @@ A collection of hands-on prototypes designed to build a strong intuition for key
 - [Unique ID Generation in Distributed Systems](#unique-id-generation-in-distributed-systems)
 - [Content Delivery Network (CDN)](#content-delivery-network-cdn)
 - [Consistent Hashing for Sharding](#consistent-hashing-for-sharding)
+- [Distributed Locking](#distributed-locking)
 
 ---
 
@@ -205,4 +206,205 @@ To demonstrate its effectiveness, a simulation was run with 1,000 shards and 10,
 
 **Conclusion:**
 The results clearly validate the primary benefit of consistent hashing: it provides a stable and scalable method for distributing data in a dynamic environment, minimizing disruption during scaling events.
+
+---
+
+## Distributed Locking
+
+**Concept:**
+Distributed locking is a synchronization mechanism used in distributed systems to ensure that only one process at a time can access a shared resource or execute a critical section of code. Unlike local locks (e.g., mutexes), distributed locks work across multiple servers or processes, providing coordination in environments where the application is distributed across multiple instances.
+
+**Motivation:**
+- **Prevent Race Conditions:** In distributed applications, multiple processes might try to update the same resource simultaneously, leading to inconsistent states.
+- **Ensure Data Integrity:** For operations that must be atomic (e.g., booking a seat or updating a bank account), distributed locks prevent double-spending or double-booking problems.
+- **Resource Coordination:** Coordinate access to limited resources in a cluster, such as controlling the number of processes that can perform heavy operations simultaneously.
+
+**Key Components & Challenges:**
+1. **Lock Acquisition:** A process must be able to acquire a lock atomically.
+2. **Lock Release:** The process must release the lock when done.
+3. **Lock Expiration:** Locks must expire automatically to prevent deadlocks if a process crashes.
+4. **Fencing Tokens:** To handle the scenario where a process believes it still holds a lock that has expired.
+
+**Redis-Based Implementation:**
+The most common approach is to use a centralized data store like Redis, which supports atomic operations:
+```
++--------+        +--------+        +--------+
+| Client |        | Redis  |        | Client |
+|   A    | <----> | Server | <----> |   B    |
++--------+        +--------+        +--------+
+     |                |                 |
+     | SETNX lock_key |                 |
+     |--------------->|                 |
+     | Success        |                 |
+     |<---------------|                 |
+     |                |                 |
+     |                | SETNX lock_key  |
+     |                |<----------------|
+     |                | Failure         |
+     |                |---------------->|
+     |                |                 |
+     | Process critical section         |
+     |                |                 |
+     | DEL lock_key   |                 |
+     |--------------->|                 |
+     |                |                 |
+```
+
+**Implementation Details:**
+Our distributed lock solution uses three key Redis commands:
+- `SETNX` (SET if Not eXists): Atomically set a key only if it doesn't already exist
+- `EXPIRE`: Set a timeout on a key to automatically delete it after a specified time
+- Lua script for atomic check-and-delete during lock release
+
+**Key Technical Challenges Solved:**
+1. **Lock Safety**: Each lock includes a unique identifier to prevent accidental releases by other processes
+2. **Deadlock Prevention**: Automatic expiration with TTL ensures locks are eventually released even if a process crashes
+3. **Fencing Tokens**: The unique lock value prevents the "lock expiration problem" where a process holding an expired lock could still make changes
+
+**How Lock Release Works:**
+```python
+# Lua script ensures atomicity of the check-and-delete operation
+script = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+else
+    return 0
+end
+"""
+result = self.redis.eval(script, 1, self.lock_name, self.lock_value)
+```
+
+**Prototype:**
+The `DistributedLocking/` prototype implements a ticket booking system for events. When a user attempts to book a specific seat:
+
+1. The system acquires a distributed lock for that seat.
+2. It checks if the seat is still available.
+3. If available, it processes the booking (with a simulated delay to mimic payment processing).
+4. It releases the lock when done.
+
+This ensures that even if multiple users try to book the same seat simultaneously, only one will succeed, preventing double bookings.
+
+**Testing:**
+The simulation demonstrates how distributed locking handles concurrent booking attempts from multiple users, ensuring that:
+- Each seat is booked by at most one user.
+- When a booking is cancelled, the seat becomes available for other users.
+- The system is resilient to process failures through lock expiration (TTL).
+
+**Real-World Applications:**
+- **Inventory Management**: Preventing overselling in e-commerce platforms
+- **Financial Transactions**: Ensuring account updates are atomic
+- **Resource Allocation**: Managing limited resources in cloud environments
+- **Distributed Caching**: Coordinating cache invalidation across multiple instances
+
+## Detailed Redis-Based Distributed Locking Implementation
+
+Our distributed locking prototype demonstrates a practical implementation using Redis, which is an ideal choice for distributed locks due to its atomic operations and high performance.
+
+### Redis Data Structures Used
+
+In our implementation, we use simple Redis string keys with the following naming conventions:
+- **Lock keys**: `lock:<event_id>:<seat_id>` - Holds the lock owner's unique identifier
+- **Seat reservation keys**: `seat:<event_id>:<seat_id>` - Holds the user ID who booked the seat
+
+### Core Redis Commands for Distributed Locking
+
+1. **Lock Acquisition**:
+   ```
+   SETNX lock:concert-2023:A1 "user-1-uuid"  # Atomically set if not exists
+   EXPIRE lock:concert-2023:A1 10            # Set 10-second expiration to prevent deadlocks
+   ```
+   
+   Or combined in a single command (Redis 2.6.12+):
+   ```
+   SET lock:concert-2023:A1 "user-1-uuid" NX EX 10
+   ```
+
+2. **Checking Lock Existence**:
+   ```
+   EXISTS lock:concert-2023:A1   # Returns 1 if locked, 0 if not
+   ```
+
+3. **Lock Release with Safety Check**:
+   ```
+   # Lua script ensures we only delete our own lock
+   EVAL "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end" 1 lock:concert-2023:A1 "user-1-uuid"
+   ```
+
+4. **Seat Reservation Operations**:
+   ```
+   # Check if seat is already booked
+   EXISTS seat:concert-2023:A1
+   
+   # Book a seat with 5-minute expiration
+   SETEX seat:concert-2023:A1 300 "user-1"
+   
+   # Get all reservations for an event
+   KEYS seat:concert-2023:*
+   ```
+
+### Implementation Classes
+
+Our prototype consists of two main classes:
+
+1. **DistributedLock**: Core locking mechanism with:
+   - Unique lock value generation using UUID
+   - Automatic lock expiration
+   - Atomic lock acquisition and release
+   - Retry with exponential backoff and jitter
+
+2. **TicketBookingSystem**: Demonstrates lock usage with:
+   - Lock acquisition before checking seat availability
+   - Critical section protection during booking
+   - Proper lock release in all scenarios
+   - Reservation tracking and management
+
+### Testing the System
+
+The `redis_test.py` script demonstrates concurrent access by simulating multiple users trying to book the same seat simultaneously:
+
+```python
+# Create multiple threads representing different users
+threads = []
+for i in range(num_users):
+    user_id = f"user-{i+1}"
+    thread = threading.Thread(
+        target=simulate_user, 
+        args=(booking_system, event_id, user_id, seat_id),
+        name=f"User-{i+1}"
+    )
+    threads.append(thread)
+    thread.start()
+```
+
+The test verifies that:
+- Only one user successfully books the seat
+- All other attempts fail properly
+- The lock is released correctly
+- No race conditions occur during concurrent booking attempts
+
+### Best Practices Demonstrated
+
+Our implementation follows these distributed locking best practices:
+
+1. **Unique Lock Values**: Each lock instance creates a unique identifier, preventing accidental lock releases by other processes.
+
+2. **Automatic Expiration**: All locks have TTL (Time-To-Live) values to prevent deadlocks if a process crashes.
+
+3. **Atomic Operations**: Uses Redis atomic commands and Lua scripting for race-free lock management.
+
+4. **Safe Lock Release**: Only the lock owner can release it, using an atomic check-and-delete operation.
+
+5. **Retry with Backoff**: Implements exponential backoff with jitter to handle high-contention scenarios gracefully.
+
+6. **Context Manager Support**: The lock can be used with Python's `with` statement for cleaner code and guaranteed release.
+
+### Running the Example
+
+To run the test against a Redis server:
+
+```bash
+python DistributedLocking/redis_test.py localhost
+```
+
+This demonstrates how distributed locking prevents race conditions in a concurrent ticket booking scenario, ensuring data integrity across multiple processes.
 
